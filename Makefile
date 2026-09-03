@@ -17,7 +17,8 @@ RUFF       := $(VENV)/bin/ruff
 
 .DEFAULT_GOAL := help
 .PHONY: help setup setup-worker setup-web dev test test-worker test-web \
-        lint lint-worker lint-web typecheck verify verify-fast clean
+        lint lint-worker lint-web typecheck verify verify-fast clean \
+        db-up db-down db-reset db-status db-psql db-studio test-db
 
 help:
 	@echo "Recruiting Intelligence Platform"
@@ -30,7 +31,18 @@ help:
 	@echo "  make verify     full verification (used at phase checkpoints)"
 	@echo "  make clean      remove build artifacts and caches"
 	@echo ""
+	@echo "  Database (local Supabase; needs Docker running):"
+	@echo "  make db-up      start the local stack"
+	@echo "  make db-reset   drop, re-apply migrations, re-seed"
+	@echo "  make db-status  show stack status and URLs"
+	@echo "  make db-psql    open psql against the local database"
+	@echo "  make db-studio  print the Supabase Studio URL"
+	@echo "  make db-down    stop the local stack"
+	@echo "  make test-db    run only the DB integration tests"
+	@echo ""
 	@echo "  worker CLI:     $(VENV)/bin/worker health"
+	@echo "                  $(VENV)/bin/worker db check"
+	@echo "                  $(VENV)/bin/worker metrics show"
 
 # -- Setup -------------------------------------------------------------------
 
@@ -79,6 +91,45 @@ lint-web:
 typecheck:
 	@echo "==> tsc"
 	cd $(WEB_DIR) && npm run typecheck
+
+# -- Database ----------------------------------------------------------------
+# Local Supabase stack. Requires Docker to be running. Migrations live in
+# supabase/migrations/ and are applied by the CLI -- never hand-edit a database.
+
+LOCAL_DB_URL := postgresql://postgres:postgres@127.0.0.1:54322/postgres
+
+db-up:
+	@docker info > /dev/null 2>&1 || (echo "Docker is not running. Start Docker Desktop first." && exit 1)
+	supabase start
+
+db-down:
+	supabase stop
+
+# Drops the local database, re-applies every migration from scratch, and
+# re-seeds. This is the "migration applies from clean database" path.
+db-reset:
+	@docker info > /dev/null 2>&1 || (echo "Docker is not running. Start Docker Desktop first." && exit 1)
+	supabase db reset
+
+db-status:
+	supabase status
+
+# Falls back to the psql inside the Supabase container, since a local psql is
+# not guaranteed to be installed.
+db-psql:
+	@if command -v psql > /dev/null 2>&1; then \
+		psql "$(LOCAL_DB_URL)"; \
+	else \
+		echo "Local psql not found; using the container's."; \
+		if [ -t 0 ]; then TTY=-it; else TTY=-i; fi; \
+		docker exec $$TTY supabase_db_$(shell basename $(CURDIR)) psql -U postgres; \
+	fi
+
+db-studio:
+	@echo "Supabase Studio: http://127.0.0.1:54323"
+
+test-db:
+	cd $(WORKER_DIR) && .venv/bin/pytest -m integration -v
 
 # -- Verification ------------------------------------------------------------
 # One definition of "verified" lives in scripts/verify.sh.

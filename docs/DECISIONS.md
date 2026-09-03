@@ -249,3 +249,131 @@ The two halves share no dependencies, no build graph, and no language. Workspace
 - Each project is set up and run in its own directory; the Makefile is the only place that knows about both.
 - The Makefile targets GNU Make 3.81 (the version macOS ships), so `.ONESHELL` is unavailable and each recipe line runs in its own shell.
 - If a third component ever shares JavaScript dependencies with the web app, this decision should be revisited.
+
+---
+
+## ADR-012 — psycopg 3 with hand-written SQL; no ORM
+
+**Date:** 2026-09-03
+**Status:** Accepted
+
+**Decision**
+The worker talks to Postgres through `psycopg` 3 with SQL written by hand. `recruiting_intel/db/` resolves a connection URL and hands out connections; it does not wrap queries or model rows. Migrations stay raw `.sql` under `supabase/migrations/`, applied by the Supabase CLI.
+
+**Reason**
+User decision. §3 names Supabase but no Python database library. Deduplication correctness depends on specific constraint behavior — partial unique indexes, `ON CONFLICT` semantics, check constraints — which an ORM would abstract away precisely where it must stay visible. §3 already commits to SQL migrations, so a mapping layer would be a second, redundant description of the same schema.
+
+**Alternatives considered**
+- `supabase-py` over PostgREST — convenient for CRUD, awkward for transactions and bulk inserts, and it could not exercise DDL behavior in tests. Couples the worker to Supabase's API rather than to Postgres.
+- SQLAlchemy Core — portable and composable, but an abstraction over SQL the project would otherwise write directly.
+
+**Consequences**
+- The schema is the interface. Column renames ripple through SQL strings and are caught by integration tests, not by a type checker.
+- Migrations are the only path by which schema changes reach a database. Hand-editing is prohibited.
+- Transaction scope is explicit at every call site, which is what lets a metric event commit or roll back atomically with the work it measures.
+
+---
+
+## ADR-013 — Database integration tests: marked, auto-skipped, loudly reported
+
+**Date:** 2026-09-03
+**Status:** Accepted
+
+**Decision**
+Tests needing Postgres are marked `@pytest.mark.integration` and skipped when the database is unreachable. `scripts/verify.sh` reports the skip prominently and the run summary reads **"VERIFICATION PASSED WITH GAPS"**, never "all green". A phase checkpoint requires these tests to have actually run. Implementation proceeds without a database; the work then pauses so the user brings the stack up, and the integration suite is run together.
+
+**Reason**
+User decision, resolving a genuine conflict. `CLAUDE.md` and §20 state that external availability must never determine whether tests pass; §10 requires local DB integration tests for migration-from-clean, FK enforcement, and enum rejection. Those cannot be faked without testing a mock instead of the schema. A local container is infrastructure rather than an external service, so the rules are reconcilable — but only if a skipped run can never be mistaken for a passing one.
+
+**Alternatives considered**
+- Hard-require the database for `make verify` — maximally honest, but breaks the Stop hook and all offline work.
+- A separate `verify-db` target outside the normal loop — clean separation, but the suite would run rarely and rot unnoticed between checkpoints.
+
+**Consequences**
+- `make verify` succeeds offline while stating plainly that the schema is unverified.
+- `verify-fast.sh` (the Stop hook) never touches the database and stays fast.
+- The distinct summary line means "passed" and "passed with gaps" cannot be confused at a glance.
+- `make test-db` runs only the integration suite.
+
+---
+
+## ADR-014 — pgmq enabled in Phase 2; no consumer until Phase 6
+
+**Date:** 2026-09-03
+**Status:** Accepted
+
+**Decision**
+The `pgmq` extension is enabled and a `research_tasks` queue created, with an integration test proving send/read/archive round-trips. No producer or consumer logic is written; Phase 6 owns that.
+
+**Reason**
+User decision. §2B says to prepare queue infrastructure and §3 names Supabase Queues / pgmq. Enabling it now verifies the extension is actually available in the local stack, rather than discovering its absence mid-Phase-6 when the dedupe work depends on it.
+
+**Alternatives considered**
+- A plain `research_tasks` table consumed with `SELECT … FOR UPDATE SKIP LOCKED` — fewer moving parts and no extension dependency, but deviates from §3's named choice.
+- Defer entirely to Phase 6 — strictly minimal, but §2B explicitly says to prepare it.
+
+**Consequences**
+- Phase 6 inherits a working queue and only has to write the enqueue-once-per-new-canonical-job rule and the consumer.
+- The project now depends on `pgmq` being present in whatever Postgres it runs against, including production. Worth confirming before Phase 11 deployment.
+
+---
+
+## ADR-015 — RLS enabled deny-by-default in Phase 2
+
+**Date:** 2026-09-03
+**Status:** Accepted
+
+**Decision**
+Row level security is enabled on all sixteen tables with **no policies**, which denies all access to unprivileged roles. The worker connects with the service role and bypasses RLS. UI policies arrive in Phase 9; the full review stays in Phase 12D.
+
+**Reason**
+Phase 2 does not mention RLS, and nothing is deployed until Phase 11, so deferring would be defensible. But Supabase exposes tables through PostgREST by default, and a table created without RLS is readable the moment a project goes live. Enabling it now costs one line per table and removes an entire class of "we forgot" failure. An integration test asserts no table is left unprotected.
+
+**Alternatives considered**
+- Defer entirely to Phase 9 or 12D — matches the letter of the phase plan, but leaves a security default in the wrong position for nine phases.
+
+**Consequences**
+- Any future client that connects with the anon key sees nothing until a policy is written. That is the intended default, but it will look like a bug to whoever first connects the UI, so Phase 9 must write policies deliberately.
+- Phase 12D's review verifies the policies, not their existence.
+
+---
+
+## ADR-016 — Native Postgres enums for fixed vocabularies
+
+**Date:** 2026-09-03
+**Status:** Accepted
+
+**Decision**
+The fixed vocabularies from `docs/DATA_MODEL.md` are native Postgres enum types: `role_family`, `classification_method`, `verification_status`, `source_type`, `scan_status`, `research_status`, `email_status`, `candidate_scope`, `application_status`.
+
+**Reason**
+"Invalid enum/state rejected" is an explicit Phase 2 acceptance criterion. Native enums reject invalid values at write time rather than at read time or in a later report. `docs/DATA_MODEL.md` already treats adding a value as a decision-worthy change, so the rigidity is aligned with intent rather than fighting it.
+
+**Alternatives considered**
+- `text` with `CHECK` constraints — easier to alter, but weaker typing and no enumeration available to clients.
+
+**Consequences**
+- Adding a value requires `ALTER TYPE … ADD VALUE` in a migration. Cheap.
+- Removing or renaming one is genuinely awkward, which is the intended friction.
+- Application state transitions are additionally guarded by a check constraint tying status to its timestamps, so `APPLIED_EMAILED` without an `emailed_at` is unwritable.
+
+---
+
+## ADR-017 — Dedupe Level 3 fingerprint deferred to Phase 6
+
+**Date:** 2026-09-03
+**Status:** Accepted
+
+**Decision**
+`jobs` carries unique constraints for dedupe Level 1 (ATS type + job ID) and Level 2 (canonicalized application URL). The Level 3 deterministic fingerprint column and its index are **not** created in Phase 2.
+
+**Reason**
+The fingerprint is defined as company + normalized semantic title tokens + location + recruiting season + job family. None of those normalization rules exist yet — they are Phase 5 and Phase 6 work. A column whose contents are undefined would constrain nothing, and guessing its shape now would likely require a migration to undo.
+
+**Alternatives considered**
+- Add a nullable `dedupe_fingerprint` column now — harmless but useless, and it would imply a design decision that has not been made.
+
+**Consequences**
+- Levels 1 and 2 are enforced by the database from Phase 2 onward, which is what the 3→1→1 guarantee actually rests on for ATS-sourced jobs.
+- Phase 6 adds the fingerprint column, its backfill, and its index in its own migration.
+- Levels 3 and 4 remain application-layer logic; the conservative-merge rule ("favor duplicate false negatives over destructive false merges") applies there.

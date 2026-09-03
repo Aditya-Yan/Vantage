@@ -1,6 +1,8 @@
 # Data Model
 
-Status: **conceptual model.** Authoritative DDL arrives in Phase 2 as SQL migrations under `supabase/migrations/`. This document describes intent, invariants, and vocabulary; exact column types, indexes, and auxiliary fields may evolve during Phase 2 without a decision record, but the entities and their relationships may not.
+Status: **implemented.** The authoritative DDL is the migration set under `supabase/migrations/` (Phase 2). This document remains the readable description of intent, invariants, and vocabulary; where it and the migrations disagree, the migrations are what the database actually enforces.
+
+Schema changes reach a database **only** through a new migration. Hand-editing is prohibited (ADR-012).
 
 ---
 
@@ -421,11 +423,43 @@ Which families are *targeted* is configuration, separate from which family a job
 
 ## 9. Constraint design principles
 
-Applied when the Phase 2 migrations are written:
+Applied in the Phase 2 migrations:
 
 - Uniqueness is designed for **idempotent ingestion first**, cosmetics second
 - Canonical job identity is enforced in the database, not only in application code, because concurrent multi-source ingestion is the normal case
-- Enum values use check constraints or Postgres enums so invalid states are rejected at write time
+- Enum values use native Postgres enums so invalid states are rejected at write time (ADR-016)
 - Foreign keys are real; orphaned evidence is a bug
-- Every table carries timestamps
+- Every table carries timestamps, maintained by a shared `set_updated_at` trigger
 - Deletion is avoided in favor of archival flags wherever history has analytical value
+
+### Uniqueness rules as built
+
+| Table | Rule | Purpose |
+| --- | --- | --- |
+| `discoveries` | `(source_config_id, external_source_id)` where the ID exists | Re-scanning does not duplicate |
+| `discoveries` | `(source_config_id, canonicalized_url)` where no ID exists | Fallback identity |
+| `discoveries` | CHECK: an ID **or** a URL must be present | Without one, idempotency is impossible |
+| `jobs` | `(ats_type, ats_job_id)` where both present | **Dedupe Level 1** |
+| `jobs` | `application_url` where present | **Dedupe Level 2** |
+| `job_sources` | `(job_id, discovery_id)` | A source attaches once |
+| `job_sources` | `discovery_id` | One discovery supports at most one job |
+| `company_aliases` | `lower(alias)` globally | An alias resolves to exactly one company |
+| `applications` | `job_id` | One application record per job |
+| `daily_metric_snapshots` | `(snapshot_date, metric_name)` | Snapshots are idempotent per day |
+
+Dedupe Levels 3 and 4 are deliberately absent; they depend on normalization rules that arrive in Phase 6 (ADR-017).
+
+### Invariants enforced by check constraint
+
+- `jobs.raw_title` cannot be blank — the published title is evidence
+- An ATS identity is all-or-nothing, so a half-populated one cannot pose as a dedupe key
+- `recruiters`: `UNKNOWN` forbids an address; any other status requires one
+- `applications`: status and timestamps must agree (`APPLIED_EMAILED` without `emailed_at` is unwritable)
+- `classifications`: only `LLM_FALLBACK` may carry token or cost figures
+- `email_patterns`: independent sources cannot exceed examples
+- `scan_runs`: a `RUNNING` scan has no finish time; a finished one must have one
+- `metric_events`: **append-only**, enforced by a trigger that rejects UPDATE and DELETE
+
+## 10. Security
+
+Row level security is enabled on all sixteen tables with no policies, denying access to unprivileged roles by default. The worker connects with the service role and bypasses it. UI policies arrive in Phase 9 (ADR-015).

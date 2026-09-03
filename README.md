@@ -4,7 +4,7 @@ A personal recruiting-intelligence platform for software-engineering job discove
 
 Vantage watches a curated universe of high-value SWE employers plus public job-discovery sources, converts heterogeneous raw observations into exactly one canonical record per real opening, automatically researches relevant recruiters for genuinely new openings, ranks them deterministically from evidence, and generates outreach drafts after the user applies.
 
-> **Status: Phase 1 of 12 complete.** The full-stack skeleton runs locally with one-command verification. There is no ingestion pipeline, database, or recruiter research yet — Phase 2 begins the data foundation. See [Roadmap](#roadmap).
+> **Status: Phase 2 of 12 complete.** The full-stack skeleton and the database foundation are in place: 16 tables, deterministic constraints, an append-only metrics substrate, and a research queue. There is no ingestion pipeline yet — Phase 3 builds the company registry. See [Roadmap](#roadmap).
 
 ---
 
@@ -53,7 +53,7 @@ Recruiter research is triggered by the creation of a new canonical job and by no
 | --- | --- |
 | Web | Next.js, TypeScript, React, Tailwind, shadcn/ui |
 | Worker | Python 3.12+, `venv`/`pip`, Pydantic, structlog, `httpx` |
-| Database | Supabase PostgreSQL, migrations in `supabase/migrations` |
+| Database | Supabase PostgreSQL 17, psycopg 3, migrations in `supabase/migrations` |
 | Queue | Supabase Queues / pgmq |
 | Storage | Supabase Storage (private bucket, resume files) |
 
@@ -94,7 +94,7 @@ This project uses **public information only.**
 | --- | --- | --- |
 | 0 | Project constitution and scaffold | **Complete** |
 | 1 | Development foundation — Next.js app, Python worker, `make verify` | **Complete** |
-| 2 | Supabase schema and metrics core | Not started |
+| 2 | Supabase schema and metrics core | **Complete** |
 | 3 | Company registry and precomputed target filter | Not started |
 | 4A | Greenhouse adapter | Not started |
 | 4B | Lever and Ashby adapters | Not started |
@@ -116,7 +116,7 @@ Each phase ends at a checkpoint: tests and lint run, documentation updates, a lo
 
 ## Development
 
-Requires Node 20+ and Python 3.12+.
+Requires Node 20+, Python 3.12+, and Docker (for the local database).
 
 ```bash
 make setup     # create the worker venv, install both toolchains
@@ -126,10 +126,23 @@ make lint      # ruff + ESLint
 make verify    # everything: structure, lint, typecheck, all tests
 ```
 
+The local database runs on Supabase's stack:
+
+```bash
+make db-up      # start Postgres, Studio, and the rest
+make db-reset   # drop, re-apply every migration, re-seed
+make db-psql    # open a SQL shell
+make test-db    # database integration tests only
+```
+
+Schema changes reach a database only through a migration in `supabase/migrations/`. Databases are never hand-edited.
+
 The worker CLI runs from its venv without activation:
 
 ```bash
 services/worker/.venv/bin/worker health
+services/worker/.venv/bin/worker db check
+services/worker/.venv/bin/worker metrics show
 ```
 
 `make verify` is the checkpoint gate. It runs every step even after one fails, then reports a summary — a partial pass never hides behind the first error. Missing dependencies fail loudly rather than being skipped.

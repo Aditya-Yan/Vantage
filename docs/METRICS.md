@@ -13,7 +13,32 @@ Instrumentation is a product requirement, not a reporting afterthought.
 
 ## Storage
 
-`metric_events` is the append-only substrate (event name, entity type, entity ID, optional numeric value, metadata, timestamp). `daily_metric_snapshots` holds the durable aggregates. SQL views compute the reporting surface; a `resume_metrics` view exposes the subset suitable for external summary.
+`metric_events` is the append-only substrate (event name, entity type, entity ID, optional numeric value, metadata, timestamp). Append-only is **enforced by a trigger** that rejects UPDATE and DELETE: a measurement that can be edited after the fact is not a measurement.
+
+`daily_metric_snapshots` holds durable aggregates, written by `capture_daily_metric_snapshot()`. It is idempotent per day and **skips NULL rates**, so an absent measurement is never frozen into history as a zero. Phase 11 schedules it; nothing calls it automatically yet.
+
+The `resume_metrics` view computes the reporting surface. Counts are always present; **derived rates are NULL when the denominator is zero**, because "no data yet" and "0%" are different claims and only one of them is true on an empty system.
+
+## Current state (Phase 2)
+
+The metrics service and storage exist; **no product metric has data yet.** Every pipeline count reads zero and every rate reads NULL. Those zeros are true measurements of a system that has ingested nothing, not placeholders. Real values begin at Phase 4A.
+
+Inspect them with `worker metrics show` or `select * from resume_metrics;`.
+
+## Semantic API
+
+Business logic calls `recruiting_intel.metrics.Metrics`, never raw SQL. Implemented in Phase 2:
+
+| Method | Records |
+| --- | --- |
+| `scan_started` / `scan_completed` / `scan_failed` | scan lifecycle, duration, counts, error class |
+| `discovery_created` | one raw observation |
+| `classification_completed` | method, family, confidence, and LLM usage **only** when a model was called |
+| `duplicate_collapsed` | which dedupe level matched |
+| `canonical_job_created` | a genuinely new job |
+| `research_enqueued` / `research_completed` | queue and research outcome, including zero-recruiter results and blocked LinkedIn attempts |
+
+Event names are a closed vocabulary (`EVENT_NAMES`); emitting an unregistered name raises. A **failed metric write is logged and swallowed** — losing a measurement is bad, losing the work it measured is worse.
 
 ---
 

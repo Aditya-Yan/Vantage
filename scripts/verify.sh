@@ -69,6 +69,39 @@ if require "$VENV/bin/worker" 'worker CLI (health)'; then
     run_step 'worker CLI (health)' sh -c "'$VENV/bin/worker' health >/dev/null"
 fi
 
+# -- Database integration ----------------------------------------------------
+# These tests need a real Postgres: foreign keys, check constraints, and
+# partial unique indexes cannot be verified against a mock without testing the
+# mock instead of the schema.
+#
+# When the database is down they are skipped -- but never quietly. A suite that
+# silently skips is indistinguishable from one that passes, and that is the
+# more dangerous failure. DB_UNVERIFIED is reported in the summary.
+DB_UNVERIFIED=0
+if [ -x "$VENV/bin/pytest" ]; then
+    printf '\n=== db integration tests ===\n'
+    if "$VENV/bin/python" -c "
+import sys
+sys.path.insert(0, '$WORKER_DIR/src')
+from recruiting_intel.db import is_reachable
+sys.exit(0 if is_reachable() else 1)
+" 2>/dev/null; then
+        if (cd "$WORKER_DIR" && .venv/bin/pytest -m integration -q); then
+            printf '%s\n' "--- PASS: db integration tests"
+        else
+            printf '%s\n' "--- FAIL: db integration tests"
+            FAILURES="$FAILURES\n  - db integration tests"
+        fi
+    else
+        DB_UNVERIFIED=1
+        printf '!!!  SKIPPED: Postgres unreachable at 127.0.0.1:54322\n'
+        printf '!!!  The database schema is UNVERIFIED by this run.\n'
+        printf "!!!  Start it with:  make db-up && make db-reset\n"
+        printf '%s\n' "--- SKIP: db integration tests"
+    fi
+    STEPS=$((STEPS + 1))
+fi
+
 # -- Web app -----------------------------------------------------------------
 if require "$WEB_DIR/node_modules" 'web lint (eslint)'; then
     run_step 'web lint (eslint)'   sh -c "cd '$WEB_DIR' && npm run --silent lint"
@@ -83,6 +116,15 @@ if [ -n "$FAILURES" ]; then
     # shellcheck disable=SC2059
     printf "$FAILURES\n"
     exit 1
+fi
+
+if [ "$DB_UNVERIFIED" -ne 0 ]; then
+    # Not a failure -- the code that ran did pass -- but the run is incomplete,
+    # and saying "all green" here would be untrue.
+    printf 'VERIFICATION PASSED WITH GAPS (%s steps)\n' "$STEPS"
+    printf '  Database schema was NOT verified (Postgres unreachable).\n'
+    printf '  A phase checkpoint requires these tests to have actually run.\n'
+    exit 0
 fi
 
 printf 'VERIFICATION PASSED (%s steps, all green)\n' "$STEPS"

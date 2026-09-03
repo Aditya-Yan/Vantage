@@ -33,14 +33,18 @@ Every external adapter requires saved fixtures. Per adapter, cover at minimum: n
 
 ### Database integration tests
 
-Against a local Supabase instance:
+Against a local Supabase instance. These need a real Postgres: foreign keys, check constraints, and partial unique indexes cannot be verified against a mock without testing the mock instead of the schema.
 
-- Migrations apply cleanly from an empty database, and a reset reproduces the same schema
-- Foreign keys hold
-- Invalid enum values and invalid state transitions are rejected at write time
-- Upserts are idempotent
-- Queue creation and message semantics
-- RLS where applicable
+They are marked `@pytest.mark.integration` and **skipped when the database is unreachable** — but never quietly. `scripts/verify.sh` prints a prominent warning and its summary reads `VERIFICATION PASSED WITH GAPS`, never "all green". A phase checkpoint requires them to have actually run (ADR-013).
+
+```bash
+make db-up && make db-reset   # start Postgres, apply migrations, seed
+make test-db                  # integration suite only
+```
+
+Each test runs inside a transaction that is rolled back, so the suite is order-independent and leaves the developer's database as it found it. Tests asserting on rejections use savepoints via the `failing` fixture, since a failed statement otherwise aborts the surrounding transaction.
+
+Covered: migrations apply from clean and a reset reproduces an identical schema; foreign keys hold; invalid enum values and invalid state transitions are rejected at write time; the uniqueness rules that make ingestion idempotent; `metric_events` append-only enforcement; `resume_metrics` returning honest zeros and NULLs; snapshot idempotency; pgmq round-trip; and RLS enabled on every table.
 
 ### Pipeline integration tests
 
@@ -117,6 +121,8 @@ Vitest globals are disabled in favor of explicit imports, so React Testing Libra
 | `make lint` | ruff + ESLint |
 | `make typecheck` | `tsc --noEmit` |
 | `make verify` | Everything — delegates to `scripts/verify.sh` |
+| `make db-up` / `make db-reset` | Start local Postgres; apply migrations and seed |
+| `make test-db` | Integration suite only |
 | `scripts/verify.sh` | Full verification, run at phase checkpoints |
 | `scripts/verify-fast.sh` | Quick subset, wired to the Claude Code Stop hook |
 | `scripts/check-structure.sh` | Dependency-free structural and secret-hygiene checks |

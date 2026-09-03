@@ -133,6 +133,17 @@ check_file apps/web/package.json
 check_file services/worker/pyproject.toml
 check_file Makefile
 
+# Database foundation (Phase 2). Migrations are the only way schema changes
+# reach a database -- a schema present without a migration behind it would be
+# unreproducible.
+check_file supabase/config.toml
+check_file supabase/seed.sql
+if [ -n "$(find supabase/migrations -name '*.sql' -print -quit 2>/dev/null)" ]; then
+    ok 'supabase/migrations contains migrations'
+else
+    fail 'supabase/migrations contains migrations'
+fi
+
 # ---------------------------------------------------------------------------
 section 'CLAUDE.md required topics (MASTER_PLAN section 5)'
 # ---------------------------------------------------------------------------
@@ -219,8 +230,9 @@ fi
 # ---------------------------------------------------------------------------
 section 'Decision records'
 # ---------------------------------------------------------------------------
-for adr in ADR-001 ADR-002 ADR-003 ADR-004 ADR-005 \
-           ADR-006 ADR-007 ADR-008 ADR-009 ADR-010 ADR-011; do
+for adr in ADR-001 ADR-002 ADR-003 ADR-004 ADR-005 ADR-006 \
+           ADR-007 ADR-008 ADR-009 ADR-010 ADR-011 ADR-012 \
+           ADR-013 ADR-014 ADR-015 ADR-016 ADR-017; do
     check_contains docs/DECISIONS.md "$adr" "$adr recorded"
 done
 
