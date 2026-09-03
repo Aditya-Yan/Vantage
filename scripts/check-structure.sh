@@ -1,12 +1,15 @@
 #!/bin/sh
-# Phase 0 structural verification.
+# Repository structural verification.
 #
-# Checks the Phase 0 acceptance criteria from docs/MASTER_PLAN.md section 8.
-# Dependency-free POSIX sh: no pytest, no node, no uv. Phase 0 predates all of them.
+# Asserts that the constitution documents, Claude Code configuration, directory
+# layout, and secret hygiene are all intact. Dependency-free POSIX sh, so it
+# runs before any toolchain is installed.
 #
-# Becomes an input to scripts/verify.sh in Phase 1. See ADR-005.
+# Called by scripts/verify.sh and scripts/verify-fast.sh (ADR-005, ADR-009).
+# Renamed from check-phase0.sh in Phase 1: it now checks structure that must
+# hold in every phase, not Phase 0's transient state.
 #
-# Usage: ./scripts/check-phase0.sh
+# Usage: ./scripts/check-structure.sh
 
 set -u
 
@@ -60,7 +63,7 @@ check_contains() {
     fi
 }
 
-printf 'Phase 0 structural verification\n'
+printf 'Repository structural verification\n'
 printf 'Repository: %s\n' "$ROOT"
 
 # ---------------------------------------------------------------------------
@@ -86,8 +89,7 @@ check_file .claude/skills/phase-check/SKILL.md
 check_file .claude/agents/adapter-auditor.md
 check_file .claude/agents/test-auditor.md
 
-# settings.json must be valid JSON. Phase 0 declares no hooks (ADR-002):
-# a hook referencing scripts/verify-fast.sh cannot exist before Phase 1 builds it.
+# settings.json must be valid JSON.
 if command -v python3 >/dev/null 2>&1; then
     if python3 -m json.tool .claude/settings.json >/dev/null 2>&1; then
         ok '.claude/settings.json parses as JSON'
@@ -98,10 +100,12 @@ else
     printf '  skip  .claude/settings.json JSON parse (python3 unavailable)\n'
 fi
 
-if grep -qF '"hooks"' .claude/settings.json 2>/dev/null; then
-    fail '.claude/settings.json declares no hooks (deferred to Phase 1, ADR-002)'
+# The Stop hook was deferred from Phase 0 until verify-fast.sh existed
+# (ADR-002). It exists from Phase 1 onward, and must point at a real script.
+if grep -qF 'verify-fast.sh' .claude/settings.json 2>/dev/null; then
+    ok '.claude/settings.json wires the Stop hook to verify-fast.sh (ADR-002)'
 else
-    ok '.claude/settings.json declares no hooks (deferred to Phase 1, ADR-002)'
+    fail '.claude/settings.json wires the Stop hook to verify-fast.sh (ADR-002)'
 fi
 
 # Both subagents are read-only auditors and must say so.
@@ -120,15 +124,14 @@ check_dir tests/fixtures/jobs
 check_dir tests/fixtures/research
 check_dir tests/fixtures/dedupe
 
-# Phase 1 generators (create-next-app, uv) own these. Pre-seeding them fights
-# the tooling, so Phase 0 must leave them alone (ADR-003).
-for d in apps/web services/worker; do
-    if [ -d "$d" ]; then
-        fail "$d not pre-created (owned by Phase 1 generators, ADR-003)"
-    else
-        ok "$d not pre-created (owned by Phase 1 generators, ADR-003)"
-    fi
-done
+# Both applications exist from Phase 1 onward. Phase 0 asserted the opposite
+# (ADR-003, generators own these directories); that assertion inverted when the
+# generators ran. See ADR-009.
+check_dir apps/web
+check_dir services/worker
+check_file apps/web/package.json
+check_file services/worker/pyproject.toml
+check_file Makefile
 
 # ---------------------------------------------------------------------------
 section 'CLAUDE.md required topics (MASTER_PLAN section 5)'
@@ -152,7 +155,12 @@ check_contains CLAUDE.md 'docs/DECISIONS.md'              'where decisions are r
 # ---------------------------------------------------------------------------
 section 'Phase status'
 # ---------------------------------------------------------------------------
-check_contains docs/PHASE_STATUS.md 'Phase 0' 'reports Phase 0'
+# Phase-agnostic: the file must carry the required headings, whatever phase it
+# reports. Asserting a specific phase number would make this script fail on
+# every checkpoint.
+check_contains docs/PHASE_STATUS.md '## Current phase'   'declares a current phase'
+check_contains docs/PHASE_STATUS.md '## Completed phases' 'declares completed phases'
+check_contains docs/PHASE_STATUS.md '## Known blockers'   'declares known blockers'
 
 # ---------------------------------------------------------------------------
 section 'Secret hygiene'
@@ -211,7 +219,8 @@ fi
 # ---------------------------------------------------------------------------
 section 'Decision records'
 # ---------------------------------------------------------------------------
-for adr in ADR-001 ADR-002 ADR-003 ADR-004 ADR-005; do
+for adr in ADR-001 ADR-002 ADR-003 ADR-004 ADR-005 \
+           ADR-006 ADR-007 ADR-008 ADR-009 ADR-010 ADR-011; do
     check_contains docs/DECISIONS.md "$adr" "$adr recorded"
 done
 
@@ -220,9 +229,9 @@ printf '\n----------------------------------------\n'
 printf 'passed: %s   failed: %s\n' "$PASS" "$FAIL"
 
 if [ "$FAIL" -gt 0 ]; then
-    printf 'PHASE 0 VERIFICATION FAILED\n'
+    printf 'STRUCTURE CHECK FAILED\n'
     exit 1
 fi
 
-printf 'PHASE 0 VERIFICATION PASSED\n'
+printf 'STRUCTURE CHECK PASSED\n'
 exit 0

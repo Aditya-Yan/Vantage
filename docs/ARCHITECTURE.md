@@ -75,7 +75,7 @@ Research is triggered by **the creation of a new canonical job and nothing else*
 | Component | Technology | Responsibility |
 | --- | --- | --- |
 | Web app | Next.js, TypeScript, React, Tailwind, shadcn/ui | Job feed, application state, recruiter display, draft generation UI, internal `/metrics` page |
-| Worker | Python 3.12+, `uv`, Pydantic, `httpx` | All pipeline stages. One codebase, three entrypoints |
+| Worker | Python 3.12+, `venv`/`pip`, Pydantic, structlog, `httpx` | All pipeline stages. One codebase, three entrypoints |
 | Database | Supabase PostgreSQL | Canonical state, evidence, metrics. Migrations in `supabase/migrations` |
 | Queue | Supabase Queues / pgmq | Asynchronous recruiter research tasks |
 | Storage | Supabase Storage (private bucket) | Resume files. Never publicly exposed |

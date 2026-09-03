@@ -95,18 +95,32 @@ A manually labeled set of real observed postings, scored for precision, recall, 
 
 ---
 
-## Commands
+## Tooling
 
-Available from **Phase 1**, when the toolchain is created:
+| Layer | Tool |
+| --- | --- |
+| Python tests | `pytest` with `pytest-asyncio` (asyncio mode `auto`) |
+| Python lint | `ruff` |
+| Frontend tests | Vitest with React Testing Library and `jsdom` (ADR-007) |
+| Frontend lint | ESLint (`eslint-config-next`) |
+| Types | `tsc --noEmit`, strict mode plus `noUncheckedIndexedAccess` |
+
+Vitest globals are disabled in favor of explicit imports, so React Testing Library's auto-cleanup is wired up manually in `apps/web/vitest.setup.ts`. Without it, renders accumulate across tests.
+
+## Commands
 
 | Command | Scope |
 | --- | --- |
-| `make setup` | Install frontend and worker dependencies |
-| `make dev` | Run the local development stack |
-| `make test` | Frontend tests + Python tests |
-| `make lint` | ESLint + ruff |
-| `make verify` | Everything: lint, typecheck, and all tests |
-| `scripts/verify.sh` | Full verification, used at phase checkpoints |
-| `scripts/verify-fast.sh` | Quick subset, suitable for a Stop hook |
+| `make setup` | Create the worker venv, install both toolchains |
+| `make dev` | Web dev server at `http://localhost:3000` |
+| `make test` | pytest + Vitest |
+| `make lint` | ruff + ESLint |
+| `make typecheck` | `tsc --noEmit` |
+| `make verify` | Everything — delegates to `scripts/verify.sh` |
+| `scripts/verify.sh` | Full verification, run at phase checkpoints |
+| `scripts/verify-fast.sh` | Quick subset, wired to the Claude Code Stop hook |
+| `scripts/check-structure.sh` | Dependency-free structural and secret-hygiene checks |
 
-Phase 0 has no test runner. Its structural acceptance criteria are checked by `scripts/check-phase0.sh`, which becomes an input to `scripts/verify.sh` in Phase 1.
+`scripts/verify.sh` runs **every** step even after one fails, then reports a summary and exits non-zero. A partial pass must not hide behind the first error. Missing dependencies are a hard failure pointing at `make setup`, never a silent skip — a run that reports success because it did nothing is worse than one that fails.
+
+`scripts/verify-fast.sh` covers structure, ruff, and pytest only; `tsc` and the frontend suite dominate the runtime and are left to the full script.

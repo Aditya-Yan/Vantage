@@ -4,7 +4,7 @@ A personal recruiting-intelligence platform for software-engineering job discove
 
 Vantage watches a curated universe of high-value SWE employers plus public job-discovery sources, converts heterogeneous raw observations into exactly one canonical record per real opening, automatically researches relevant recruiters for genuinely new openings, ranks them deterministically from evidence, and generates outreach drafts after the user applies.
 
-> **Status: Phase 0 of 12 complete.** This repository currently contains the project constitution, documentation, and scaffold only. There is no runnable application yet — Phase 1 delivers the toolchain. See [Roadmap](#roadmap).
+> **Status: Phase 1 of 12 complete.** The full-stack skeleton runs locally with one-command verification. There is no ingestion pipeline, database, or recruiter research yet — Phase 2 begins the data foundation. See [Roadmap](#roadmap).
 
 ---
 
@@ -52,7 +52,7 @@ Recruiter research is triggered by the creation of a new canonical job and by no
 | Layer | Technology |
 | --- | --- |
 | Web | Next.js, TypeScript, React, Tailwind, shadcn/ui |
-| Worker | Python 3.12+, `uv`, Pydantic, `httpx` |
+| Worker | Python 3.12+, `venv`/`pip`, Pydantic, structlog, `httpx` |
 | Database | Supabase PostgreSQL, migrations in `supabase/migrations` |
 | Queue | Supabase Queues / pgmq |
 | Storage | Supabase Storage (private bucket, resume files) |
@@ -93,7 +93,7 @@ This project uses **public information only.**
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 0 | Project constitution and scaffold | **Complete** |
-| 1 | Development foundation — Next.js app, Python worker, `make verify` | Not started |
+| 1 | Development foundation — Next.js app, Python worker, `make verify` | **Complete** |
 | 2 | Supabase schema and metrics core | Not started |
 | 3 | Company registry and precomputed target filter | Not started |
 | 4A | Greenhouse adapter | Not started |
@@ -116,23 +116,25 @@ Each phase ends at a checkpoint: tests and lint run, documentation updates, a lo
 
 ## Development
 
-Not yet runnable. Phase 1 creates the toolchain and these commands:
+Requires Node 20+ and Python 3.12+.
 
 ```bash
-make setup     # install frontend and worker dependencies
-make dev       # run the local development stack
-make test      # frontend + Python tests
-make lint      # ESLint + ruff
-make verify    # everything: lint, typecheck, all tests
+make setup     # create the worker venv, install both toolchains
+make dev       # web dev server at http://localhost:3000
+make test      # pytest + vitest
+make lint      # ruff + ESLint
+make verify    # everything: structure, lint, typecheck, all tests
 ```
 
-Phase 0 verifies itself structurally:
+The worker CLI runs from its venv without activation:
 
 ```bash
-./scripts/check-phase0.sh
+services/worker/.venv/bin/worker health
 ```
 
-Tests never depend on external service availability or paid APIs — every adapter and provider is exercised through committed fixtures and mocks.
+`make verify` is the checkpoint gate. It runs every step even after one fails, then reports a summary — a partial pass never hides behind the first error. Missing dependencies fail loudly rather than being skipped.
+
+No credentials are required to develop or test. Tests never depend on external service availability or paid APIs — every adapter and provider is exercised through committed fixtures and mocks, and the worker's configuration loads correctly with a completely empty environment.
 
 ---
 
